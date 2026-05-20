@@ -1,0 +1,154 @@
+import sys
+import os
+os.environ["QT_LOGGING_RULES"] = "qt.gui.imageio.png=false"
+
+from datetime import datetime
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QLabel, QLineEdit,
+    QPushButton, QVBoxLayout, QMessageBox, QTextEdit,
+    QComboBox, QHBoxLayout, QFrame
+)
+
+class SlurryCalcGUI(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("矿浆浓度密度换算工具（多公式版）")
+        self.resize(500, 580)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # 1. 基础参数
+        layout.addWidget(QLabel("矿石真比重 s"))
+        self.edit_s = QLineEdit()
+        self.edit_s.setPlaceholderText("例如 2.7")
+        layout.addWidget(self.edit_s)
+
+        layout.addWidget(QLabel("载体比重 s1（水=1.0）"))
+        self.edit_s1 = QLineEdit()
+        self.edit_s1.setText("1.0")
+        layout.addWidget(self.edit_s1)
+
+        layout.addWidget(QLabel("用户标记"))
+        self.edit_user = QLineEdit()
+        self.edit_user.setText("默认用户")
+        layout.addWidget(self.edit_user)
+
+        # 2. 计算模式选择
+        layout.addWidget(QLabel("\n=== 选择计算模式 ==="))
+        self.mode_box = QComboBox()
+        self.mode_box.addItems([
+            "1. 已知 Cw(重量%) → 求 Sm, Cv",
+            "2. 已知 Cv(体积%) → 求 Sm, Cw",
+            "3. 已知 Sm(浆体密度) → 求 Cv, Cw"
+        ])
+        self.mode_box.currentIndexChanged.connect(self.on_mode_change)
+        layout.addWidget(self.mode_box)
+
+        # 3. 已知值输入框
+        layout.addWidget(QLabel("已知值输入"))
+        self.edit_input = QLineEdit()
+        self.input_label = QLabel("已知重量浓度 Cw (%)")
+        layout.addWidget(self.input_label)
+        layout.addWidget(self.edit_input)
+
+        # 计算按钮
+        self.btn_calc = QPushButton("开始计算")
+        self.btn_calc.clicked.connect(self.do_calc)
+        layout.addWidget(self.btn_calc)
+
+        # 结果区域
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(line)
+
+        layout.addWidget(QLabel("📊 计算结果"))
+        self.result_text = QTextEdit()
+        self.result_text.setReadOnly(True)
+        layout.addWidget(self.result_text)
+
+        self.setLayout(layout)
+        self.on_mode_change(0)
+
+    def on_mode_change(self, idx):
+        if idx == 0:
+            self.input_label.setText("已知重量浓度 Cw (%)")
+        elif idx == 1:
+            self.input_label.setText("已知体积浓度 Cv (%)")
+        elif idx == 2:
+            self.input_label.setText("已知浆体密度 Sm")
+
+    def do_calc(self):
+        try:
+            s = float(self.edit_s.text())
+            s1 = float(self.edit_s1.text())
+            user = self.edit_user.text().strip()
+            val = float(self.edit_input.text())
+            mode = self.mode_box.currentIndex()
+        except Exception:
+            QMessageBox.warning(self, "输入错误", "请输入有效数字！")
+            return
+
+        try:
+            if mode == 0:
+                # 已知 Cw → Sm, Cv
+                cw = val
+                Sm = s1 / (1 - cw * ((s - s1) / s) / 100)
+                Cv = (Sm - s1) / (s - s1) * 100
+                Cw_out = cw
+                Cv_out = Cv
+                Sm_out = Sm
+
+            elif mode == 1:
+                # 已知 Cv → Sm, Cw
+                Cv = val
+                Sm = s1 + (Cv / 100) * (s - s1)
+                Cw = 100 / (1 + (s1 / s) * ((100 - Cv) / Cv))
+                Cw_out = Cw
+                Cv_out = Cv
+                Sm_out = Sm
+
+            elif mode == 2:
+                # 已知 Sm → Cv, Cw
+                Sm = val
+                Cv = (Sm - s1) / (s - s1) * 100
+                Cw = 100 / (1 + (s1 / s) * ((100 - Cv) / Cv))
+                Cw_out = Cw
+                Cv_out = Cv
+                Sm_out = Sm
+
+            else:
+                QMessageBox.warning(self, "错误", "无效模式")
+                return
+
+        except Exception as e:
+            QMessageBox.critical(self, "计算错误", str(e))
+            return
+
+        # 时间戳
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 结果展示
+        res = f"""用户标记：{user}
+计算时间：{now}
+
+矿石真比重 s = {s}
+载体比重 s1   = {s1}
+
+重量浓度 Cw  = {Cw_out:.2f} %
+体积浓度 Cv  = {Cv_out:.2f} %
+浆体密度 Sm  = {Sm_out:.4f}
+"""
+        self.result_text.setText(res)
+
+        # 写入记录文件
+        log = f"[{now}] {user} | s={s},s1={s1} | Cw={Cw_out:.2f}%,Cv={Cv_out:.2f}%,Sm={Sm_out:.4f}\n"
+        with open("slurry_all_record.txt", "a", encoding="utf-8") as f:
+            f.write(log)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    w = SlurryCalcGUI()
+    w.show()
+    sys.exit(app.exec())
